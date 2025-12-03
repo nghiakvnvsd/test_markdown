@@ -1,553 +1,547 @@
-
-Le, Nghia
-1:41 AM (0 minutes ago)
-to me
-
-# Order Management Renewal Service - System Architecture
+# System Architecture Documentation
 
 > **Document Version:** 1.0  
 > **Last Updated:** December 4, 2025  
-> **Architecture Style:** Layered Microservice with Event-Driven Scheduling
+> **Project:** Order Management Renewal Service
 
 ---
 
-## 1. High-Level Architecture
+## Table of Contents
+
+1. [Architecture Overview](#architecture-overview)
+2. [High-Level Architecture](#high-level-architecture)
+3. [Component Architecture](#component-architecture)
+4. [Data Architecture](#data-architecture)
+5. [Integration Architecture](#integration-architecture)
+6. [Security Architecture](#security-architecture)
+7. [Deployment Architecture](#deployment-architecture)
+8. [Data Flow Diagrams](#data-flow-diagrams)
+9. [State Diagrams](#state-diagrams)
+10. [Sequence Diagrams](#sequence-diagrams)
+
+---
+
+## Architecture Overview
+
+The Order Management Renewal Service is a Spring Boot microservice that manages the motor insurance policy renewal lifecycle. It follows a layered architecture pattern with clear separation of concerns between presentation, business logic, and data access layers.
+
+### Key Architecture Principles
+
+| Principle | Implementation |
+|-----------|----------------|
+| **Separation of Concerns** | Distinct layers for controllers, services, repositories |
+| **Dependency Injection** | Spring IoC container for loose coupling |
+| **RESTful Design** | HTTP-based API following REST conventions |
+| **Database Abstraction** | Repository pattern with JDBC templates |
+| **Externalized Configuration** | Environment-specific property files |
+| **Scheduled Operations** | Spring Scheduler for automated tasks |
+
+---
+
+## High-Level Architecture
 
 ```mermaid
 flowchart TB
     subgraph Clients["🖥️ External Clients"]
-        Portal[Admin Portal]
-        OutSystems[OutSystems]
+        OS[OutSystems Portal]
+        Mobile[Customer Mobile App]
+        Admin[Admin Dashboard]
         External[External Systems]
     end
    
     subgraph Gateway["🔐 API Gateway Layer"]
-        APIGEE[APIGEE Gateway<br/>JWT / API Key Validation]
+        APIGEE[APIGEE Gateway<br/>OAuth 2.0 / JWT / API Key]
     end
    
-    subgraph Application["⚙️ Order Management Service"]
+    subgraph Application["⚙️ Order Management Renewal Service"]
         subgraph Controllers["Presentation Layer"]
-            OMC[OrderManagementController]
-            KMC[KmsController]
+            OMCtrl[OrderManagementController<br/>/motor/renewal/*]
+            KmsCtrl[KmsController<br/>/motor/renewal/kms/*]
         end
        
         subgraph Services["Service Layer"]
             DistSvc[DistributeRenewalService]
             UploadSvc[UploadRenewalService]
-            SubmitSvc[SubmitRenewalServiceV3]
+            SubmitSvc[SubmitRenewalService]
             SearchSvc[SearchRenewalService]
             EmailSvc[EmailService]
             NebulaSvc[NebulaService]
             OrderSvc[OrderService]
             OfferSvc[OfferService]
-            PricingSvc[RenewalOfferRuleEngineService]
-            MotorSvc[MotorUnderwrittenRenewalService]
+            RuleSvc[RuleEngineService]
         end
        
         subgraph Repos["Repository Layer"]
-            DistRepo[DistributeRenewalServiceRepo]
-            UploadRepo[UploadRenewalServiceRepo]
-            SearchRepo[SearchRenewalServiceRepo]
-            MotorRepo[MotorUnderwrittenRenewalRepo]
+            DistRepo[DistributeRenewalRepo]
+            UploadRepo[UploadRenewalRepo]
+            SearchRepo[SearchRenewalRepo]
+            MotorRepo[MotorRenewalRepo]
             OrderRepo[OrderRepo]
             OfferRepo[OfferRepo]
         end
        
-        subgraph Scheduler["Scheduler Layer"]
+        subgraph Scheduler["Scheduler Component"]
             Jobs[SchedulerJob]
         end
     end
    
-    subgraph Data["💾 Data Layer"]
-        SQL[(SQL Server<br/>GRPPRODUCER)]
-        Oracle[(Oracle<br/>Premia - GISUAT02)]
+    subgraph DataLayer["💾 Data Layer"]
+        MSSQL[(SQL Server<br/>GRPPRODUCER)]
+        Oracle[(Oracle<br/>Premia DB)]
     end
    
-    subgraph ExternalAPIs["🌐 External APIs"]
-        POSWS[POS-WS<br/>Motor Sync]
+    subgraph ExternalAPIs["🌐 External Systems"]
+        POSWS[POS-WS<br/>Policy Admin]
         OpenL[OpenL<br/>Pricing Engine]
-        Nebula[Nebula DMS<br/>Document Mgmt]
-        LC2[LC2<br/>Email Service]
-        KMS[AWS KMS<br/>Encryption]
+        NebulaDMS[Nebula<br/>Document Mgmt]
+        LC2[Liberty Connect<br/>Email Service]
+        AWS[AWS KMS<br/>Encryption]
     end
    
     Clients --> APIGEE
     APIGEE --> Controllers
     Controllers --> Services
     Services --> Repos
-    Repos --> SQL
+    Repos --> MSSQL
     Repos --> Oracle
     Services --> ExternalAPIs
-    Scheduler --> Services
+    Jobs --> Services
 ```
 
 ---
 
-## 2. Component Interaction Diagram
+## Component Architecture
+
+### Application Layers
 
 ```mermaid
 flowchart TB
-    subgraph Request["📥 Incoming Request"]
-        HTTP[HTTP Request]
+    subgraph PresentationLayer["📱 Presentation Layer"]
+        direction LR
+        C1[OrderManagementController]
+        C2[KmsController]
+        EH[Exception Handler]
+        V[Input Validation]
     end
    
-    subgraph Security["🔒 Security Layer"]
-        JWTFilter[JwtAuthenticationFilter]
-        Security[Spring Security]
-    end
-   
-    subgraph Controller["🎮 Controller Layer"]
-        OMController[OrderManagementController<br/>/motor/renewal/*]
-    end
-   
-    subgraph ServiceLayer["⚙️ Service Layer"]
-        subgraph Core["Core Services"]
-            Distribute[DistributeRenewalService]
-            Upload[UploadRenewalService]
-            Submit[SubmitRenewalServiceV3]
-            Search[SearchRenewalService]
+    subgraph BusinessLayer["⚙️ Business Layer"]
+        direction TB
+        subgraph CoreServices["Core Services"]
+            DS[DistributeRenewalService]
+            US[UploadRenewalService]
+            SS[SubmitRenewalService]
+            SRS[SearchRenewalService]
+            MRS[MotorRenewalService]
         end
        
-        subgraph Support["Support Services"]
-            Email[EmailService]
-            Nebula[NebulaWrapperService]
-            Pricing[RenewalOfferRuleEngineService]
+        subgraph SupportServices["Support Services"]
+            ES[EmailService]
+            NS[NebulaService]
+            NWS[NebulaWrapperService]
+            OS[OrderService]
+            OFS[OfferService]
+        end
+       
+        subgraph IntegrationServices["Integration Services"]
+            RES[RuleEngineService]
+            MRH[MotorRenewalHandler]
         end
     end
    
-    subgraph Handler["🔧 Handler Layer"]
-        MotorHandler[MotorRenewalHandler]
+    subgraph DataLayer["💾 Data Access Layer"]
+        direction LR
+        DR[DistributeRenewalRepo]
+        UR[UploadRenewalRepo]
+        SR[SearchRenewalRepo]
+        MR[MotorRenewalRepo]
+        OR[OrderRepo]
+        OFR[OfferRepo]
     end
    
-    subgraph Repo["💽 Repository Layer"]
-        DistRepo[DistributeRenewalServiceRepo]
-        UploadRepo[UploadRenewalServiceRepo]
+    subgraph Infrastructure["🔧 Infrastructure"]
+        direction LR
+        DB1[(SQL Server)]
+        DB2[(Oracle)]
+        Cache[Spring Cache]
     end
    
-    subgraph DB["🗄️ Database"]
-        MSSQL[(SQL Server)]
-        OracleDB[(Oracle)]
+    PresentationLayer --> BusinessLayer
+    BusinessLayer --> DataLayer
+    DataLayer --> Infrastructure
+```
+
+### Controller Responsibilities
+
+```mermaid
+flowchart LR
+    subgraph OrderManagementController["OrderManagementController"]
+        direction TB
+       
+        subgraph OfferOps["Offer Operations"]
+            Upload[POST /offer<br/>Upload Offers]
+            Get[GET /offer<br/>Get Offers]
+            Update[PUT /offer<br/>Update Offers]
+            Delete[DELETE /offer<br/>Delete Offers]
+            Search[POST /offer/search<br/>Search Offers]
+        end
+       
+        subgraph DistOps["Distribution Operations"]
+            Distribute[POST /offer/distribute<br/>Distribute]
+            Revoke[POST /offer/revokeDistribute<br/>Revoke]
+        end
+       
+        subgraph SubmitOps["Submission Operations"]
+            Submit[POST /offer/submit<br/>Submit to Premia]
+            Decline[POST /offer/decline<br/>Decline Offer]
+        end
+       
+        subgraph ReportOps["Reporting Operations"]
+            Summary[GET /offer/summary<br/>Metrics]
+            Print[POST /offer/print<br/>Print]
+        end
+       
+        subgraph SchedulerOps["Scheduler Triggers"]
+            SchedSubmit[GET /scheduler/offer/submit]
+            SchedDist[GET /scheduler/offer/distribute]
+            SchedRetrieval[GET /scheduler/offer/retrival]
+            SchedNotif[GET /scheduler/renewal/notification]
+        end
+    end
+```
+
+### Service Dependencies
+
+```mermaid
+flowchart TB
+    subgraph Services["Service Layer Dependencies"]
+        DSI[DistributeRenewalServiceImpl]
+        USI[UploadRenewalServiceImpl]
+        SSI[SubmitRenewalServiceImpl]
+        SSV3[SubmitRenewalServiceV3Impl]
+        SRSI[SearchRenewalServiceImpl]
+        ESI[EmailServiceImpl]
+        NSI[NebulaServiceImpl]
+        NWSI[NebulaWrapperServiceImpl]
+        OSI[OrderServiceImpl]
+        OFSI[OfferServiceImpl]
     end
    
-    HTTP --> JWTFilter
-    JWTFilter --> Security
-    Security --> OMController
-    OMController --> Core
-    Core --> Support
-    Core --> Handler
-    Core --> Repo
-    Handler --> Repo
-    Repo --> MSSQL
-    Repo --> OracleDB
+    subgraph Repositories["Repositories"]
+        DRepo[DistributeRenewalRepo]
+        URepo[UploadRenewalRepo]
+        SRepo[SearchRenewalRepo]
+        MRepo[MotorRenewalRepo]
+        ORepo[OrderRepo]
+        OFRepo[OfferRepo]
+    end
+   
+    subgraph ExternalClients["External Clients"]
+        RT[RestTemplate]
+        JC[Jersey Client]
+        JT[JdbcTemplate]
+    end
+   
+    DSI --> DRepo
+    DSI --> ESI
+    DSI --> NWSI
+    DSI --> RT
+   
+    USI --> URepo
+    USI --> JT
+   
+    SSI --> MRepo
+    SSI --> JT
+   
+    SSV3 --> MRepo
+    SSV3 --> JT
+   
+    SRSI --> SRepo
+   
+    NSI --> RT
+    NWSI --> RT
+   
+    OSI --> ORepo
+    OSI --> NWSI
+   
+    OFSI --> OFRepo
 ```
 
 ---
 
-## 3. Authentication & Security Flow
+## Data Architecture
+
+### Database Schema Overview
+
+```mermaid
+erDiagram
+    MOTOR_UNDERWRITTEN_RENEWAL_OFFER ||--o{ OFFER_STATUS_HISTORY : tracks
+    MOTOR_UNDERWRITTEN_RENEWAL_OFFER ||--o| RENEWAL_ORDER : creates
+    MOTOR_UNDERWRITTEN_RENEWAL_OFFER ||--o{ RENEWAL_NOTIFICATION : triggers
+   
+    MOTOR_UNDERWRITTEN_RENEWAL_OFFER {
+        int id PK "Auto-increment ID"
+        string policy_no UK "Policy Number"
+        date pol_from_date "Policy Start Date"
+        date pol_to_date "Policy End Date"
+        string producer_code "Producer Code"
+        string producer_name "Producer Name"
+        string product_type "Product Type"
+        string cover_type "Coverage Type"
+        string insured_name "Insured Name"
+        string insured_email "Customer Email"
+        decimal new_sum_insured "Sum Insured"
+        decimal new_gross_premium "Gross Premium"
+        int status_code "Current Status"
+        string failure_reason "Failure Reason"
+        string renewal_notice_id "Document ID"
+        int email_count "Emails Sent"
+        datetime created_date "Created Date"
+        string created_by "Created By"
+        datetime modified_date "Modified Date"
+        string modified_by "Modified By"
+    }
+   
+    OFFER_STATUS_HISTORY {
+        int id PK
+        int offer_id FK
+        int status_code
+        string status_description
+        string failure_reason
+        datetime status_date
+        string updated_by
+    }
+   
+    RENEWAL_ORDER {
+        int order_id PK
+        int offer_id FK
+        string order_status
+        string cover_note_number
+        datetime submitted_date
+        datetime completed_date
+        string nebula_doc_id
+    }
+   
+    RENEWAL_NOTIFICATION {
+        int notification_id PK
+        int offer_id FK
+        string notification_type
+        string recipient_email
+        datetime sent_date
+        string send_status
+    }
+```
+
+### Database Connections
+
+```mermaid
+flowchart LR
+    subgraph App["Application"]
+        DS1[Primary DataSource<br/>HikariCP Pool]
+        DS2[Oracle DataSource<br/>HikariCP Pool]
+    end
+   
+    subgraph Databases["Databases"]
+        subgraph MSSQL["SQL Server"]
+            GRP[(GRPPRODUCER)]
+        end
+       
+        subgraph ORA["Oracle"]
+            PREM[(Premia)]
+        end
+    end
+   
+    DS1 -->|"Max Pool: 20<br/>Idle: 5<br/>Timeout: 30s"| GRP
+    DS2 -->|"Max Pool: 20<br/>Idle: 5<br/>Timeout: 30s"| PREM
+```
+
+### Data Flow Between Systems
+
+```mermaid
+flowchart LR
+    subgraph Source["📥 Source Systems"]
+        Premia1[(Premia<br/>Policy Data)]
+        Upload[Batch Upload<br/>CSV/JSON]
+    end
+   
+    subgraph Processing["⚙️ Processing"]
+        OMRS[Order Mgmt<br/>Renewal Service]
+    end
+   
+    subgraph Storage["💾 Storage"]
+        MSSQL[(SQL Server<br/>Staging)]
+    end
+   
+    subgraph Target["📤 Target Systems"]
+        Premia2[(Premia<br/>ETL Target)]
+        Nebula[Nebula<br/>Documents]
+        Email[Email<br/>Notifications]
+    end
+   
+    Premia1 -->|Offer Retrieval| OMRS
+    Upload -->|Bulk Upload| OMRS
+    OMRS -->|Store| MSSQL
+    OMRS -->|Submit| Premia2
+    OMRS -->|Update Metadata| Nebula
+    OMRS -->|Send| Email
+```
+
+---
+
+## Integration Architecture
+
+### External System Integration Map
+
+```mermaid
+flowchart TB
+    subgraph OMRS["Order Management Renewal Service"]
+        Core[Core Application]
+    end
+   
+    subgraph POS["POS-WS Integration"]
+        direction TB
+        POSWS[POS-WS API]
+        SyncAPI[Motor Sync API<br/>/api/apc/motor/rn/sync]
+        ApprovalAPI[Document Approval API<br/>/api/apc/document/change/approve]
+        RevokeAPI[Revoke Distribution API<br/>/api/apc/motor/rn/revokeDistribute]
+    end
+   
+    subgraph OpenLInt["OpenL Integration"]
+        direction TB
+        OpenL[OpenL Rules Engine]
+        CalcAPI[Calculate Premium<br/>/calculate]
+        RulesAPI[Get All Rules<br/>/getAllOptionList]
+    end
+   
+    subgraph NebulaInt["Nebula Integration"]
+        direction TB
+        NebulaAPI[Nebula DMS API]
+        MetaAPI[Content Metadata<br/>/content-metadata]
+        BulkAPI[Bulk Update<br/>/bulkupdate]
+        WrapperAPI[Nebula Wrapper<br/>/file]
+    end
+   
+    subgraph EmailInt["Email Integration"]
+        direction TB
+        LC2[Liberty Connect v2]
+        EmailAPI[Email API<br/>/v1/email]
+    end
+   
+    subgraph AWSInt["AWS Integration"]
+        direction TB
+        KMS[AWS KMS]
+        EncAPI[Encrypt/Decrypt]
+    end
+   
+    Core -->|HTTPS + x-auth-token| POSWS
+    Core -->|HTTPS| OpenL
+    Core -->|HTTPS + OAuth| NebulaAPI
+    Core -->|HTTPS + API Key| LC2
+    Core -->|AWS SDK| KMS
+```
+
+### Integration Protocols
+
+| System | Protocol | Auth Method | Data Format |
+|--------|----------|-------------|-------------|
+| POS-WS | HTTPS/REST | x-auth-token | JSON |
+| OpenL | HTTPS/REST | API Key | JSON |
+| Nebula DMS | HTTPS/REST | OAuth 2.0 | JSON |
+| Liberty Connect | HTTPS/REST | API Key | JSON |
+| AWS KMS | HTTPS | IAM/SDK | Binary |
+| Premia | JDBC | DB Auth | SQL |
+
+### Integration Sequence - Distribution Flow
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant C as 🖥️ Client
-    participant G as 🔐 API Gateway
-    participant F as 🎫 JwtAuthenticationFilter
-    participant S as 🔒 Spring Security
-    participant Ctrl as ⚙️ Controller
-    participant Svc as 📦 Service
+    participant OM as ⚙️ Order Mgmt Service
+    participant DB as 💾 SQL Server
+    participant POS as 📋 POS-WS
+    participant NEB as 📁 Nebula
+    participant LC as 📧 Liberty Connect
    
-    C->>G: Request with x-api-key + Bearer Token
-    G->>G: Validate API Key
+    C->>OM: POST /offer/distribute
+    OM->>DB: Get offers by ID
+    DB-->>OM: Offer details
    
-    alt API Key Invalid
-        G-->>C: 401 Unauthorized
-    end
+    OM->>DB: Update status to 33 (Distributing)
    
-    G->>F: Forward Request
-    F->>F: Extract JWT from Authorization Header
-    F->>F: Validate JWT against JWKS
+    OM->>POS: Motor Sync API
+    POS-->>OM: Sync response
    
-    alt JWT Valid (Azure AD or Customer Token)
-        F->>S: Set Authentication Context
-        S->>Ctrl: Process Request
-        Ctrl->>Svc: Execute Business Logic
-        Svc-->>Ctrl: Return Result
-        Ctrl-->>G: Success Response
-        G-->>C: 200 OK + Data
-    else JWT Invalid
-        F-->>G: Authentication Error
-        G-->>C: 401 Unauthorized
-    end
-```
-
----
-
-## 4. Renewal Offer Lifecycle Flow
-
-```mermaid
-flowchart LR
-    subgraph Phase1["1️⃣ Upload Phase"]
-        Ext[External System] -->|POST /offer| Upload[Upload Service]
-        Upload -->|Validate & Save| SQL1[(SQL Server)]
-    end
-   
-    subgraph Phase2["2️⃣ Pricing Phase"]
-        SQL1 -->|Get Offer Data| Pricing[Pricing Service]
-        Pricing -->|Calculate Premium| OpenL[OpenL Engine]
-        OpenL -->|Return Premium| Pricing
-        Pricing -->|Update Offer| SQL1
-    end
-   
-    subgraph Phase3["3️⃣ Distribution Phase"]
-        SQL1 -->|Get Approved Offers| Dist[Distribute Service]
-        Dist -->|Sync to POS| POSWS[POS-WS]
-        Dist -->|Send Email| LC2[LC2 Email]
-        LC2 -->|Email| Customer[📧 Customer]
-    end
-   
-    subgraph Phase4["4️⃣ Submission Phase"]
-        Customer -->|Accept Offer| Submit[Submit Service]
-        Submit -->|ETL Procedure| Oracle[(Oracle/Premia)]
-        Oracle -->|Policy Created| Complete[✅ Complete]
+    alt Sync Success
+        OM->>POS: Document Approval API
+        POS-->>OM: Approval response
+       
+        OM->>NEB: Update metadata
+        NEB-->>OM: Metadata updated
+       
+        OM->>DB: Create order record
+       
+        OM->>LC: Send notification email
+        LC-->>OM: Email sent
+       
+        OM->>DB: Update status to 31 (Distributed)
+        OM->>DB: Update email count
+       
+        OM-->>C: Success response
+    else Sync Failed
+        OM->>DB: Update status to 32 (Failed)
+        OM-->>C: Error response with details
     end
 ```
 
 ---
 
-## 5. Database Architecture
+## Security Architecture
 
-```mermaid
-erDiagram
-    RENEWAL_OFFER ||--o{ OFFER_HISTORY : tracks
-    RENEWAL_OFFER ||--o| DRIVER_INFO : has
-    RENEWAL_OFFER ||--o| PREMIUM_INFO : contains
-    RENEWAL_OFFER ||--o{ ORDER : generates
-    ORDER ||--o{ ORDER_DOCUMENT : has
-   
-    RENEWAL_OFFER {
-        int id PK "Auto-increment ID"
-        varchar policy_no "Policy Number"
-        date pol_from_date "Policy Start Date"
-        date pol_to_date "Policy End Date"
-        varchar new_producer_code "Producer Code"
-        varchar producer_name "Producer Name"
-        varchar product_type "Product Type"
-        varchar insured_name "Insured Name"
-        varchar insured_email "Email Address"
-        varchar cover_type "Cover Type"
-        varchar vehicle_make "Vehicle Make"
-        varchar vrd_name "VRD Name"
-        int year_of_make "Year of Manufacture"
-        decimal new_sum_insured "Sum Insured"
-        decimal new_gross_premium "Gross Premium"
-        varchar status "Offer Status"
-        datetime create_date "Created Date"
-        varchar create_by "Created By"
-        datetime modified_date "Modified Date"
-        varchar modified_by "Modified By"
-    }
-   
-    DRIVER_INFO {
-        int id PK
-        int offer_id FK
-        int driver_age "Driver Age"
-        int driver_sequence "Driver Number"
-    }
-   
-    PREMIUM_INFO {
-        int id PK
-        int offer_id FK
-        decimal basic_premium "Basic Premium"
-        decimal ncd_rate "NCD Rate"
-        int ncd_year "NCD Years"
-        decimal commission_01 "Commission 01"
-        decimal commission_07 "Commission 07"
-    }
-   
-    ORDER {
-        int order_id PK
-        int offer_id FK
-        varchar order_status "Order Status"
-        datetime submitted_date "Submission Date"
-        varchar nebula_doc_id "Nebula Document ID"
-    }
-   
-    ORDER_DOCUMENT {
-        int doc_id PK
-        int order_id FK
-        varchar doc_type "Document Type"
-        varchar nebula_reference "Nebula Reference"
-        varchar status "Document Status"
-    }
-   
-    OFFER_HISTORY {
-        int history_id PK
-        int offer_id FK
-        varchar prev_status "Previous Status"
-        varchar new_status "New Status"
-        datetime change_date "Status Change Date"
-        varchar changed_by "Changed By"
-    }
-```
-
----
-
-## 6. Scheduler Job Architecture
+### Security Layers
 
 ```mermaid
 flowchart TB
-    subgraph Triggers["⏰ Cron Triggers"]
-        C1[offer.submit.cron.expression]
-        C2[offer.distribute.cron.expression]
-        C3[offer.retrival.cron.expression]
-        C4[offer.renewal.cron.expression]
-        C5[order.status.cron.expression]
-        C6[offer.status.cron.expression]
+    subgraph External["🌐 External"]
+        Client[API Client]
     end
    
-    subgraph Jobs["📋 Scheduler Jobs"]
-        J1[offerSubmitSchedulerJob]
-        J2[offerDistributeSchedulerJob]
-        J3[offerRetrivalSchedulerJob]
-        J4[renewalNotificationSchedulerJob]
-        J5[orderStatusSchedulerJob]
-        J6[offerStatusSchedulerJob]
+    subgraph Gateway["🔐 API Gateway"]
+        APIGEE[APIGEE]
+        RateLimit[Rate Limiting]
+        APIKey[API Key Validation]
     end
    
-    subgraph Guards["🛡️ Job Guards"]
-        G1{jobRunning?}
-        G2{distributeJobRunning?}
-        G3{offerRetrivalJobRunning?}
-        G4{renewalNotificationJobRunning?}
-        G5{orderStatusJobRunning?}
-        G6{offerStatusJobRunning?}
+    subgraph AppSecurity["🔒 Application Security"]
+        JWTFilter[JWT Authentication Filter]
+        SecConfig[Spring Security Config]
+        JWKS[JWKS Validation]
     end
    
-    subgraph Services["⚙️ Services"]
-        S1[SubmitRenewalServiceV3]
-        S2[DistributeRenewalService]
-        S3[MotorUnderwrittenRenewalService]
-        S4[DistributeRenewalService]
-        S5[OrderService]
-        S6[OfferService]
+    subgraph DataSecurity["🔐 Data Security"]
+        Jasypt[Jasypt Encryption]
+        KMS[AWS KMS]
+        TLS[TLS 1.2+]
     end
    
-    C1 --> J1 --> G1
-    C2 --> J2 --> G2
-    C3 --> J3 --> G3
-    C4 --> J4 --> G4
-    C5 --> J5 --> G5
-    C6 --> J6 --> G6
-   
-    G1 -->|false| S1
-    G2 -->|false| S2
-    G3 -->|false| S3
-    G4 -->|false| S4
-    G5 -->|false| S5
-    G6 -->|false| S6
+    Client -->|HTTPS| Gateway
+    Gateway -->|Validated Request| AppSecurity
+    AppSecurity -->|Authenticated| DataSecurity
 ```
 
----
-
-## 7. External Integration Map
+### Authentication Flow
 
 ```mermaid
-flowchart TB
-    subgraph Service["Order Management Service"]
-        Core[Core Application]
-    end
+sequenceDiagram
+    autonumber
+    participant C as 🖥️ Client
+    participant GW as 🔐 API Gateway
+    participant JF as 🔑 JWT Filter
+    participant JWKS as 📋 JWKS Endpoint
+    participant S as ⚙️ Service
    
-    subgraph POSWS["📡 POS-WS Integration"]
-        direction TB
-        Sync[/motor/rn/sync/]
-        Approve[/document/change/approve/]
-        Revoke[/motor/rn/revokeDistribute/]
-    end
+    C->>GW: Request + x-api-key + Bearer Token
+    GW->>GW: Validate API Key
    
-    subgraph OpenLInt["🧮 OpenL Pricing"]
-        direction TB
-        Calc[/hk-motor-pricing-renewal/calculate/]
-        Rules[/hk-motor-pricing-renewal/getAllOptionList/]
-    end
-   
-    subgraph PremiaInt["🏛️ Premia/Oracle"]
-        direction TB
-        ETL[P_PREMIA_RENEW_ETL]
-        PolicySearch[policy-api/motor/premia/search]
-    end
-   
-    subgraph NebulaInt["📁 Nebula DMS"]
-        direction TB
-        JWT[/nebula/jwt/]
-        Metadata[/nebula/mcm/apac/content-metadata/]
-        BulkUpdate[/nebula/mcm/apac/content-metadata/bulkupdate/]
-        Wrapper[/api/apac/documents/v2/file/]
-    end
-   
-    subgraph EmailInt["📧 LC2 Email"]
-        direction TB
-        SendEmail[/v1/email/]
-    end
-   
-    subgraph AWSInt["☁️ AWS"]
-        direction TB
-        KMS[AWS KMS<br/>Encrypt/Decrypt]
-    end
-   
-    Core -->|Motor Sync| POSWS
-    Core -->|Premium Calculation| OpenLInt
-    Core -->|Policy ETL| PremiaInt
-    Core -->|Document Management| NebulaInt
-    Core -->|Email Notifications| EmailInt
-    Core -->|Secret Management| AWSInt
-```
-
----
-
-## 8. Offer Status State Machine
-
-```mermaid
-stateDiagram-v2
-    [*] --> Uploaded: Upload via API
-   
-    state "Upload Phase" as UploadPhase {
-        Uploaded --> ValidationFailed: Validation Error
-        Uploaded --> Priced: Calculate Premium
-        ValidationFailed --> [*]
-    }
-   
-    state "Pricing Phase" as PricingPhase {
-        Priced --> PricingFailed: Pricing Error
-        Priced --> Approved: UW Approval
-        Priced --> Declined: UW Decline
-        PricingFailed --> Priced: Retry
-    }
-   
-    state "Distribution Phase" as DistPhase {
-        Approved --> Distributed: Send to Customer
-        Distributed --> RevokedDistribute: Revoke Distribution
-        RevokedDistribute --> Approved: Re-approve
-    }
-   
-    state "Customer Response" as CustPhase {
-        Distributed --> Accepted: Customer Accepts
-        Distributed --> CustomerDeclined: Customer Declines
-        Distributed --> Expired: No Response (Timeout)
-    }
-   
-    state "Submission Phase" as SubmitPhase {
-        Accepted --> Submitted: Submit to Premia
-        Submitted --> ETLFailed: ETL Error
-        Submitted --> Completed: ETL Success
-        ETLFailed --> Submitted: Retry
-    }
-   
-    Completed --> [*]
-    Declined --> [*]
-    CustomerDeclined --> [*]
-    Expired --> [*]
-```
-
----
-
-## 9. Deployment Architecture
-
-```mermaid
-flowchart TB
-    subgraph DevOps["🔄 CI/CD Pipeline"]
-        Git[Git Repository<br/>lmigtech/api-order-mgmt-renewal-service]
-        Jenkins[Jenkins Pipeline]
-        Artifactory[Artifactory<br/>Docker Registry]
-    end
-   
-    subgraph Build["🏗️ Build Process"]
-        Maven[Maven Build]
-        Docker[Docker Build]
-        Contrast[Contrast Security Scan]
-    end
-   
-    subgraph Environments["🌍 Environments"]
-        subgraph Dev["Development"]
-            DevK8s[AWS EKS - Dev]
-            DevSQL[(Dev SQL Server)]
-            DevOracle[(Dev Oracle)]
-        end
-       
-        subgraph NonProd["Non-Production"]
-            UatK8s[AWS EKS - UAT]
-            UatSQL[(UAT SQL Server)]
-            UatOracle[(UAT Oracle)]
-        end
-       
-        subgraph Prod["Production"]
-            ProdK8s[AWS EKS - Prod]
-            ProdSQL[(Prod SQL Server)]
-            ProdOracle[(Prod Oracle)]
-        end
-    end
-   
-    subgraph Monitoring["📊 Monitoring"]
-        Datadog[Datadog APM]
-        Logs[CloudWatch Logs]
-    end
-   
-    Git --> Jenkins
-    Jenkins --> Maven
-    Maven --> Docker
-    Docker --> Contrast
-    Contrast --> Artifactory
-   
-    Artifactory -->|Deploy| DevK8s
-    Artifactory -->|Promote| UatK8s
-    Artifactory -->|Promote| ProdK8s
-   
-    DevK8s --> DevSQL
-    DevK8s --> DevOracle
-    UatK8s --> UatSQL
-    UatK8s --> UatOracle
-    ProdK8s --> ProdSQL
-    ProdK8s --> ProdOracle
-   
-    DevK8s --> Datadog
-    UatK8s --> Datadog
-    ProdK8s --> Datadog
-```
-
----
-
-## 10. Container Architecture
-
-```mermaid
-flowchart TB
-    subgraph Container["🐳 Docker Container"]
-        subgraph Base["Base Image"]
-            Alpine[Alpine Linux]
-            JRE[OpenJDK 8 JRE]
-        end
-       
-        subgraph App["Application"]
-            JAR[api-order-mgmt-renewal-service.jar]
-            Config[Environment Config]
-        end
-       
-        subgraph Agents["Monitoring Agents"]
-            ContrastAgent[Contrast Security Agent]
-            DatadogAgent[Datadog APM Agent]
-        end
-       
-        subgraph Resources["Resources"]
-            Certs[SSL Certificates<br/>jssecacerts, client.jks]
-            Templates[Email Templates<br/>RENEWAL_EMAIL_TO_CUSTOMER.html]
-        end
-    end
-   
-    subgraph Ports["🔌 Exposed Ports"]
-        P8080[Port 8080<br/>HTTP API]
-    end
-   
-    subgraph EnvVars["🔧 Environment Variables"]
-        Profile[spring.profiles.active]
-        EncSec1[enc_sec1]
-        EncSec2[enc_sec2]
-    end
-   
+    alt API Key Valid
+        GW->>JF: Forward Request
 ...
