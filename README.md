@@ -544,4 +544,445 @@ sequenceDiagram
    
     alt API Key Valid
         GW->>JF: Forward Request
-...
+        JF->>JF: Extract JWT from Header
+        JF->>JWKS: Fetch signing keys
+        JWKS-->>JF: Public keys
+        JF->>JF: Validate JWT signature
+        JF->>JF: Check token expiry
+       
+        alt Token Valid
+            JF->>S: Process request
+            S-->>C: 200 OK + Response
+        else Token Invalid
+            JF-->>C: 401 Unauthorized
+        end
+    else API Key Invalid
+        GW-->>C: 403 Forbidden
+    end
+```
+
+### Security Configuration
+
+```mermaid
+flowchart LR
+    subgraph Endpoints["Endpoint Security"]
+        Public["/api/**<br/>/auth/**<br/>permitAll()"]
+        Protected["Other endpoints<br/>JWT Required"]
+    end
+   
+    subgraph Sessions["Session Management"]
+        Stateless[STATELESS<br/>No server sessions]
+    end
+   
+    subgraph CORS["CORS Configuration"]
+        CorsEnabled[CORS Enabled<br/>CSRF Disabled]
+    end
+   
+    subgraph Filters["Security Filters"]
+        JWTFilter[JWT Authentication Filter<br/>Before UsernamePassword]
+    end
+```
+
+---
+
+## Deployment Architecture
+
+### Container Architecture
+
+```mermaid
+flowchart TB
+    subgraph Docker["🐳 Docker Container"]
+        JVM[JVM - Java 8]
+        App[Spring Boot App<br/>:8080]
+        Certs[/usr/src/liberty/trust-store/]
+        Templates[/usr/src/liberty/mail-templates/]
+    end
+   
+    subgraph Config["📁 External Config"]
+        Props[application-{env}.properties]
+        Secrets[Vault Secrets]
+    end
+   
+    subgraph Network["🌐 Network"]
+        LB[Load Balancer]
+        Ingress[Ingress Controller]
+    end
+   
+    Config --> Docker
+    Network --> Docker
+```
+
+### CI/CD Pipeline
+
+```mermaid
+flowchart LR
+    subgraph Source["📁 Source"]
+        Git[Git Repository<br/>master branch]
+    end
+   
+    subgraph Build["🔨 Build"]
+        Maven[Maven Build]
+        Test[Unit Tests]
+        Contrast[Contrast Security]
+    end
+   
+    subgraph Package["📦 Package"]
+        Docker[Docker Build]
+        Push[Push to Registry]
+    end
+   
+    subgraph Deploy["🚀 Deploy"]
+        NonProd[Non-Prod<br/>Jenkinsfile]
+        Prod[Production<br/>prod_Jenkinsfile]
+    end
+   
+    Git --> Maven --> Test --> Contrast --> Docker --> Push
+    Push --> NonProd
+    Push --> Prod
+```
+
+### Environment Configuration
+
+```mermaid
+flowchart TB
+    subgraph Environments["Deployment Environments"]
+        Dev[Development<br/>application-dev.properties]
+        NonProd[Non-Production<br/>application-nonprod.properties]
+        PreProd[Pre-Production<br/>application-preprod.properties]
+        Prod[Production<br/>application-prod.properties]
+    end
+   
+    subgraph Resources["Resources Per Environment"]
+        DevRes[Dev DBs<br/>Test APIs]
+        NonProdRes[UAT DBs<br/>Test APIs]
+        PreProdRes[PreProd DBs<br/>Staging APIs]
+        ProdRes[Prod DBs<br/>Prod APIs]
+    end
+   
+    Dev --> DevRes
+    NonProd --> NonProdRes
+    PreProd --> PreProdRes
+    Prod --> ProdRes
+```
+
+---
+
+## Data Flow Diagrams
+
+### Renewal Offer Lifecycle
+
+```mermaid
+flowchart LR
+    subgraph Phase1["1️⃣ Upload Phase"]
+        ExtSys[External System]
+        Upload[Upload Service]
+        SQL1[(SQL Server)]
+    end
+   
+    subgraph Phase2["2️⃣ Pricing Phase"]
+        Rule[Rule Engine Service]
+        OpenL[OpenL API]
+    end
+   
+    subgraph Phase3["3️⃣ Distribution Phase"]
+        Dist[Distribute Service]
+        POS[POS-WS Sync]
+        Nebula[Nebula Update]
+        Email[Email Service]
+    end
+   
+    subgraph Phase4["4️⃣ Submission Phase"]
+        Submit[Submit Service]
+        ETL[Premia ETL]
+        Oracle[(Oracle/Premia)]
+    end
+   
+    ExtSys -->|JSON| Upload
+    Upload -->|Store| SQL1
+    SQL1 -->|Read| Rule
+    Rule -->|Calculate| OpenL
+    OpenL -->|Premium| Rule
+    Rule -->|Update| SQL1
+    SQL1 -->|Read| Dist
+    Dist -->|Sync| POS
+    Dist -->|Metadata| Nebula
+    Dist -->|Notify| Email
+    Dist -->|Update| SQL1
+    SQL1 -->|Read| Submit
+    Submit -->|ETL| Oracle
+    Submit -->|Update| SQL1
+```
+
+### Scheduled Job Execution Flow
+
+```mermaid
+flowchart TB
+    subgraph Trigger["⏰ Triggers"]
+        Cron[Cron Expression]
+        Manual[Manual API Call]
+    end
+   
+    subgraph JobCheck["🔍 Job Check"]
+        Running{Job Running?}
+    end
+   
+    subgraph Execution["▶️ Execution"]
+        SetFlag[Set Running Flag]
+        Execute[Execute Job Logic]
+        ClearFlag[Clear Running Flag]
+    end
+   
+    subgraph Jobs["📋 Available Jobs"]
+        J1[Offer Submit]
+        J2[Offer Distribute]
+        J3[Offer Retrieval]
+        J4[Renewal Notification]
+        J5[Order Status Update]
+        J6[Offer Status Update]
+        J7[OMC Auto Update]
+        J8[Document Reindexing]
+    end
+   
+    Trigger --> Running
+    Running -->|No| SetFlag
+    Running -->|Yes| Skip[Skip Execution]
+    SetFlag --> Execute
+    Execute --> ClearFlag
+    Execute --> Jobs
+```
+
+---
+
+## State Diagrams
+
+### Renewal Offer Status Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> Uploaded: Upload via API
+   
+    Uploaded --> ReadyForDistribution: Status 30
+    ReadyForDistribution --> Distributing: Start Distribution
+   
+    Distributing --> Distributed: Success (31)
+    Distributing --> DistributionFailed: Failed (32)
+   
+    DistributionFailed --> ReadyForDistribution: Retry
+    DistributionFailed --> ReApproved: Re-approve (40)
+   
+    ReApproved --> Distributing: Redistribute
+   
+    Distributed --> ReDistributed: Re-distribute (14)
+    Distributed --> Submitted: Submit to Premia
+    Distributed --> Declined: Customer Declines
+   
+    ReDistributed --> Submitted: Submit
+   
+    Submitted --> Completed: ETL Success
+    Submitted --> SubmitFailed: ETL Failed
+   
+    SubmitFailed --> Submitted: Retry ETL
+   
+    Declined --> [*]
+    Completed --> [*]
+   
+    note right of ReadyForDistribution: Status Code: 30
+    note right of Distributed: Status Code: 31
+    note right of DistributionFailed: Status Code: 32
+    note right of Distributing: Status Code: 33
+    note right of ReApproved: Status Code: 40
+    note right of ReDistributed: Status Code: 14
+```
+
+### Order Status Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> Created: Order Created
+   
+    Created --> PendingSubmission: Awaiting Premia
+   
+    PendingSubmission --> Submitted: ETL Started
+   
+    Submitted --> PendingDocDelivery: Documents Processing
+   
+    PendingDocDelivery --> Completed: All Docs Delivered
+    PendingDocDelivery --> Failed: Delivery Failed
+   
+    Failed --> PendingDocDelivery: Retry
+   
+    Completed --> [*]
+```
+
+---
+
+## Sequence Diagrams
+
+### Upload Renewal Offers
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as 🖥️ Client
+    participant Ctrl as 📋 Controller
+    participant US as ⚙️ UploadService
+    participant Repo as 💾 Repository
+    participant DB as 🗄️ SQL Server
+   
+    C->>Ctrl: POST /motor/renewal/offer
+    Note over C,Ctrl: JSON: List<UnderWrittenRenewalOffer>
+   
+    Ctrl->>Ctrl: Validate request
+   
+    alt Validation Failed
+        Ctrl-->>C: 400 Bad Request + ErrorResponse
+    end
+   
+    Ctrl->>US: saveUnderWrittenRenewalOffers(offers)
+   
+    loop For each offer
+        US->>US: Validate offer data
+        US->>Repo: Check if policy exists
+        Repo->>DB: SELECT by policyNo
+        DB-->>Repo: Result
+       
+        alt Policy Exists
+            US->>Repo: Update existing
+            Repo->>DB: UPDATE
+        else New Policy
+            US->>Repo: Insert new
+            Repo->>DB: INSERT
+        end
+    end
+   
+    Repo-->>US: Save results
+    US-->>Ctrl: RenewalOfferListSaveResponse
+    Ctrl-->>C: 200 OK + Response
+    Note over Ctrl,C: totalRecords, successCount, failureCount
+```
+
+### Submit Renewal to Premia
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as 🖥️ Client
+    participant Ctrl as 📋 Controller
+    participant SS as ⚙️ SubmitService
+    participant Repo as 💾 Repository
+    participant SQL as 🗄️ SQL Server
+    participant ORA as 🗄️ Oracle
+   
+    C->>Ctrl: POST /motor/renewal/offer/submit
+    Note over C,Ctrl: RenewalOfferRequestIdList
+   
+    Ctrl->>SS: submitRenewalV3(request)
+   
+    SS->>Repo: Get offers by IDs
+    Repo->>SQL: SELECT offers
+    SQL-->>Repo: Offer details
+    Repo-->>SS: List<Offer>
+   
+    loop For each offer
+        SS->>SS: Validate status (must be distributed)
+       
+        SS->>Repo: Execute ETL procedure
+        Repo->>ORA: CALL P_PREMIA_RENEW_ETL
+        ORA-->>Repo: ETL result
+       
+        alt ETL Success
+            SS->>Repo: Update status to Submitted
+            Repo->>SQL: UPDATE status
+        else ETL Failed
+            SS->>Repo: Update status to Failed
+            Repo->>SQL: UPDATE status + error
+        end
+    end
+   
+    SS-->>Ctrl: SubmitRenewalOfferResponse
+    Ctrl-->>C: 200 OK + Response
+```
+
+### Renewal Notification Email Flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Sched as ⏰ Scheduler
+    participant DS as ⚙️ DistributeService
+    participant Repo as 💾 Repository
+    participant ES as 📧 EmailService
+    participant LC as 🌐 Liberty Connect
+    participant DB as 🗄️ SQL Server
+   
+    Sched->>DS: renewalNotificationAPIScheduler()
+   
+    DS->>Repo: getRenewalNotification()
+    Repo->>DB: SELECT eligible offers
+    Note over Repo,DB: Status = Distributed<br/>Policy expiry approaching
+    DB-->>Repo: List<RenewalNotification>
+    Repo-->>DS: Notification list
+   
+    loop For each notification
+        DS->>DS: Calculate days until expiry
+        DS->>DS: Select email subject<br/>(30-day, 10-day, 3-day)
+       
+        DS->>DS: Build email template
+        Note over DS: Replace placeholders:<br/>{{policyNumber}}<br/>{{policyExpiryDate}}
+       
+        DS->>ES: sendEmailByLc(request)
+        ES->>LC: POST /v1/email
+        Note over ES,LC: Lc2EmailRequest
+        LC-->>ES: Lc2EmailResponse
+       
+        alt Email Sent
+            ES-->>DS: Success
+            DS->>Repo: updateEmailCount(offerId)
+            Repo->>DB: UPDATE email_count
+        else Email Failed
+            ES-->>DS: Failure
+            DS->>DS: Log error
+        end
+    end
+   
+    DS-->>Sched: Complete
+```
+
+---
+
+## Appendix
+
+### Status Code Reference
+
+| Code | Name | Description | Next States |
+|------|------|-------------|-------------|
+| 30 | Ready | Ready for distribution | 33 |
+| 31 | Distributed | Successfully distributed | 14, Submit, Decline |
+| 32 | Failed | Distribution failed | 30, 40 |
+| 33 | Distributing | Distribution in progress | 31, 32 |
+| 40 | Re-approved | Re-approved after failure | 33 |
+| 14 | Re-distributed | Re-distributed | Submit |
+
+### Error Code Reference
+
+| Code | Constant | Description |
+|------|----------|-------------|
+| E000 | EXCEPTION_OCCURED | General exception |
+| E001 | FAILURE_RESPONSE_SP1 | Stored procedure failure |
+| E002 | EXCEPTION_ETL | ETL exception |
+| E003 | FAILURE_RESPONSE_SP2 | SP2 failure |
+| E004 | FAILURE_RESPONSE_SP3 | SP3 failure |
+| E005 | Import Error | Data import error |
+| E006 | Premia Error | Premia system error |
+| E007 | Approval API Error | Document approval failed |
+| E008 | Invalid Status | Invalid status for operation |
+
+### Configuration Properties
+
+| Property | Purpose | Example |
+|----------|---------|---------|
+| `motor.renewal.sync.url` | POS-WS sync endpoint | https://pos-ws/api/motor/sync |
+| `motor.renewal.approval.url` | Document approval endpoint | https://pos-ws/api/approve |
+| `lcemail.urlEmail` | LC2 email endpoint | https://lc2/v1/email |
+| `nebula.searchMetadataUrl` | Nebula metadata endpoint | https://nebula/metadata |
+| `premia.etl.procedure` | ETL stored procedure | p9libhk_gi.P_PREMIA_RENEW_ETL |
